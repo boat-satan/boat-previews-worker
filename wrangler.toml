@@ -1,7 +1,4 @@
 name = "boat-previews"
-main = "src/index.js"
-compatibility_date = "2025-08-01"
-
-[vars]
-# 公式サイトへの礼儀スリープ（ミリ秒）。不要なら "0"
-COURTESY_SLEEP_MS = "1500"
+main = "index.js"
+account_id = "<CF_ACCOUNT_ID>" # 直接書くか、Secrets使う
+compatibility_date = "2025-08-09"
