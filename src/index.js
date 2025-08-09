@@ -10,14 +10,13 @@ export default {
     const rno = race.replace("R", "");
     const src = officialDetailUrl(date, pid, rno);
 
-    // 連続アクセス対策の礼儀スリープ（調整可）
+    // 連続アクセス対策スリープ
     const sleepMs = Number(env.COURTESY_SLEEP_MS || 0);
     if (sleepMs > 0) await new Promise(r => setTimeout(r, sleepMs));
 
-    // 公式へアクセス（UA明示）
+    // 公式へアクセス
     const res = await fetch(src, { headers: { "User-Agent": "boat-previews/1.0 (+contact:you@example.com)" } });
     if (!res.ok) {
-      // 直前情報がまだ出てない/時間外は404や空があり得る
       return j({
         schemaVersion: "1.0",
         generatedAt: new Date().toISOString(),
@@ -30,9 +29,9 @@ export default {
     }
 
     const html = await res.text();
-    const preview = parseExhibition(html, { date, pid, race });
+    const preview = parseExhibition(html);
 
-    // 既存の出走表API（君のPages）から締切を添える
+    // 既存APIから締切取得
     const dl = await fetch(`https://boat-satan.github.io/racecard-crawl-api/programs-slim/v2/${date}/${pid}/${race}.json`)
       .then(r => r.ok ? r.json() : null).catch(() => null);
 
@@ -57,34 +56,37 @@ const jstYYYYMMDD = () => {
   return `${t.getUTCFullYear()}${String(t.getUTCMonth()+1).padStart(2,"0")}${String(t.getUTCDate()).padStart(2,"0")}`;
 };
 
-// ★実ページの直前タブURLに合わせて調整（例は placeholder）
+// ★直前情報（beforeinfo）URLに変更
 function officialDetailUrl(date, pid, rno) {
   const r2 = String(rno).padStart(2, "0");
-  // 例: racelist / beforeinfo など。ここは実ページを見て正しいパスに変えてね。
-  return `https://www.boatrace.jp/owpc/pc/race/racelist?hd=${date}&jcd=${pid}&rno=${r2}`;
+  return `https://www.boatrace.jp/owpc/pc/race/beforeinfo?hd=${date}&jcd=${pid}&rno=${r2}`;
 }
 
-// ★最初はざっくりパース。実HTMLに合わせてセレクタ/正規表現を調整
-function parseExhibition(html, meta) {
+// ★展示テーブルパーサ
+function parseExhibition(html) {
+  // 「展示タイム」が入っているテーブルを探す
+  const tableRe = /<table[^>]*>([\s\S]*?)<\/table>/gi;
+  let pick = null, m;
+  while ((m = tableRe.exec(html))) {
+    const tbl = m[0];
+    const head = tbl.match(/<th[^>]*>[\s\S]*?<\/th>/gi)?.map(x => strip(x)) || [];
+    if (head.some(h => /展示.?タイム/.test(h))) { pick = tbl; break; }
+  }
+  if (!pick) return { entries: [] };
+
   const rows = [];
-  // 例：class名に exhibition / before / tyokuzen 等が含まれる table を想定
-  const mTable = html.match(/<table[^>]*class="[^"]*(exhibition|before|tyokuzen)[^"]*"[^>]*>([\s\S]*?)<\/table>/i);
-  if (mTable) {
-    const tbody = mTable[2];
-    const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let m;
-    while ((m = trRe.exec(tbody))) {
-      const cells = [...m[1].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(x => strip(x[1]));
-      if (cells.length >= 4) {
-        rows.push({
-          lane: toInt(cells[0]),        // 枠番
-          name: cells[1] || null,       // 選手名
-          exTime: cells[2] || null,     // 展示タイム
-          exST: cells[3] || null,       // 展示ST
-          parts: cells[4] || null       // 部品交換（列があれば）
-        });
-      }
-    }
+  const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let r;
+  while ((r = trRe.exec(pick))) {
+    const cells = [...r[1].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(x => strip(x[1]));
+    if (cells.length < 3) continue;
+    const lane = toInt(cells[0]);
+    if (!lane || lane > 6) continue;
+    const exTime = cells.find(c => /^\d\.\d{2}$/.test(c)) || null;                // 例: 6.79
+    const exST   = cells.find(c => /^[+-]?\d\.\d{2}$|^0\.\d{2}$/.test(c)) || null; // 例: 0.12
+    const name   = cells.slice(0, 4).find(c => /[一-龠ぁ-んァ-ヶ]/.test(c)) || null;
+    const parts  = cells.find(c => /(部品|交換|ピストン|リング|シリンダ|キャブ)/.test(c)) || null;
+    rows.push({ lane, name, exTime, exST, parts });
   }
   return { entries: rows };
 }
